@@ -40,7 +40,7 @@ export function ExportPreview({
         backgroundColor: "#f3f4f7",
       });
       const link = document.createElement("a");
-      link.download = `screenshot-threads-${new Date().toISOString().slice(0, 10)}.png`;
+      link.download = `digital-threads-${new Date().toISOString().slice(0, 10)}.png`;
       link.href = dataUrl;
       link.click();
     } catch (error) {

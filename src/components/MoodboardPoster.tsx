@@ -138,7 +138,7 @@ export const MoodboardPoster = forwardRef<
       </svg>
 
       <div className="board-col" style={{ width: COL_W }}>
-        <h1>Screenshot Threads</h1>
+        <h1>Digital Threads</h1>
         <p className="board-meta">
           {done.length} screenshots · {analysis.themes.length} themes ·{" "}
           {analysis.links.length} connections
