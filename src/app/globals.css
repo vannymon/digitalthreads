@@ -368,6 +368,35 @@ button.ghost:hover {
   letter-spacing: 0.02em;
 }
 
+.key {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 14px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.key input {
+  width: 100%;
+  padding: 10px 13px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: var(--press-sm);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-geist-mono), monospace;
+}
+
+.key input:focus {
+  outline: 1.5px solid var(--thread-soft);
+}
+
+.key small {
+  font-size: 0.7rem;
+}
+
 .seg.on {
   box-shadow: var(--press-sm);
   color: var(--thread);
