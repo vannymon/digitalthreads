@@ -10,6 +10,8 @@ import type { Provider } from "./types";
  * - "ollama" calls a vision model on the visitor's own machine. No API key, no
  *   cost, nothing leaves the laptop. Slower, and less sharp on the subtle
  *   cross-domain connections.
+ * - "gemini" sends the batch to Google's Gemini API on its free tier, with the
+ *   visitor's own key. Free, works from a phone, but rate limited.
  * - "claude" sends the batch to the Anthropic API with the visitor's own key.
  *
  * Both return the same shape, so the rest of the app doesn't know which ran.
@@ -17,6 +19,8 @@ import type { Provider } from "./types";
 
 const OLLAMA_HOST = process.env.NEXT_PUBLIC_OLLAMA_HOST ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.NEXT_PUBLIC_OLLAMA_MODEL ?? "qwen3.6";
+// The alias follows Google's current Flash model, which the free tier covers.
+const GEMINI_MODEL = process.env.NEXT_PUBLIC_GEMINI_MODEL ?? "gemini-flash-latest";
 
 type Shot = {
   id: string;
@@ -118,7 +122,9 @@ export async function analyse(
     const result =
       provider === "claude"
         ? await runClaude(numbered, apiKey)
-        : await runOllama(numbered);
+        : provider === "gemini"
+          ? await runGemini(numbered, apiKey)
+          : await runOllama(numbered);
 
     const themes = result.themes
       .map((theme) => ({ ...theme, shotIds: resolveIds(theme.shotIds, shots) }))
@@ -198,6 +204,95 @@ async function runClaude(shots: Shot[], apiKey?: string): Promise<Result> {
   return response.parsed_output;
 }
 
+async function runGemini(shots: Shot[], apiKey?: string): Promise<Result> {
+  if (!apiKey?.trim()) {
+    throw new AnalysisError(
+      "Paste a Gemini API key above — it's free from aistudio.google.com/apikey.",
+    );
+  }
+
+  // Same shape as the Claude path: header, picture, OCR, per screenshot.
+  const parts: Record<string, unknown>[] = [];
+  for (const shot of shots) {
+    parts.push({ text: `<screenshot id="${shot.id}" name="${shot.name}">` });
+    const match = shot.image?.match(DATA_URL);
+    if (match) parts.push({ inline_data: { mime_type: match[1], data: match[2] } });
+    parts.push({ text: `${ocrLine(shot)}\n</screenshot>` });
+  }
+
+  // Gemini takes plain JSON Schema but rejects the "$schema" marker.
+  const { $schema: _marker, ...schema } = z.toJSONSchema(ResultSchema);
+  void _marker;
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey.trim() },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: SYSTEM }] },
+          contents: [{ role: "user", parts }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseJsonSchema: schema,
+            temperature: 0.4,
+          },
+        }),
+      },
+    );
+  } catch {
+    throw new AnalysisError("Could not reach the Gemini API. Check your connection.");
+  }
+
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null)) as {
+      error?: { message?: string; status?: string };
+    } | null;
+    const status = detail?.error?.status;
+    if (status === "INVALID_ARGUMENT" && /api key/i.test(detail?.error?.message ?? "")) {
+      throw new AnalysisError("Google rejected that Gemini API key.");
+    }
+    if (response.status === 429 || status === "RESOURCE_EXHAUSTED") {
+      throw new AnalysisError(
+        "Gemini's free tier limit was hit. Wait a minute and try again, or use a smaller batch.",
+      );
+    }
+    throw new AnalysisError(
+      `Gemini returned ${response.status}${detail?.error?.message ? `: ${detail.error.message}` : "."}`,
+    );
+  }
+
+  const payload = (await response.json()) as {
+    candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+    promptFeedback?: { blockReason?: string };
+  };
+  if (payload.promptFeedback?.blockReason) {
+    throw new AnalysisError("Gemini declined to analyse this batch.");
+  }
+  const raw = payload.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text ?? "")
+    .join("")
+    .trim();
+  if (!raw) {
+    throw new AnalysisError("Gemini returned nothing.");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new AnalysisError("Gemini's reply was not valid JSON.");
+  }
+
+  const checked = ResultSchema.safeParse(parsed);
+  if (!checked.success) {
+    throw new AnalysisError("Gemini's reply did not match the expected shape.");
+  }
+  return checked.data;
+}
+
 async function runOllama(shots: Shot[]): Promise<Result> {
   // Ollama attaches images to a message rather than to a position in the text,
   // so each screenshot gets its own message. That keeps the id, the picture
@@ -236,8 +331,8 @@ async function runOllama(shots: Shot[]): Promise<Result> {
     const hosted = !/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
     throw new AnalysisError(
       hosted
-        ? `Could not reach Ollama at ${OLLAMA_HOST}. Make sure it is running, and that OLLAMA_ORIGINS includes ${window.location.origin} — or switch to Claude.`
-        : `Could not reach Ollama at ${OLLAMA_HOST}. Start it with "ollama serve", or switch to Claude.`,
+        ? `Could not reach Ollama at ${OLLAMA_HOST}. Make sure it is running, and that OLLAMA_ORIGINS includes ${window.location.origin} — or switch to Gemini.`
+        : `Could not reach Ollama at ${OLLAMA_HOST}. Start it with "ollama serve", or switch to Gemini.`,
     );
   }
 
