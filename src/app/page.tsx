@@ -22,6 +22,26 @@ function stripEmphasis(text: string) {
     .replace(/__(.+?)__/g, "$1");
 }
 
+const KEY_STORAGE = "digitalthreads.anthropicKey";
+
+/** Storage can throw in private windows; the key field just starts empty. */
+function readKey() {
+  try {
+    return localStorage.getItem(KEY_STORAGE) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeKey(value: string) {
+  try {
+    if (value) localStorage.setItem(KEY_STORAGE, value);
+    else localStorage.removeItem(KEY_STORAGE);
+  } catch {
+    // Not remembered, but still used for this visit.
+  }
+}
+
 type JobState =
   | { kind: "idle" }
   | { kind: "working" }
@@ -39,6 +59,7 @@ export default function Home() {
   const [job, setJob] = useState<JobState>({ kind: "idle" });
   // Local model by default: free, offline, and already on this machine.
   const [provider, setProvider] = useState<Provider>("ollama");
+  const [apiKey, setApiKey] = useState("");
   const [exporting, setExporting] = useState(false);
   const [restored, setRestored] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -48,6 +69,12 @@ export default function Home() {
       if (saved.length) setShots(saved);
       setRestored(true);
     });
+    // Opened from anywhere but the laptop itself, the local model is almost
+    // certainly not reachable, so start on the option that can work.
+    if (!/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) {
+      setProvider("claude");
+    }
+    setApiKey(readKey());
     return () => void disposeOcr();
   }, []);
 
@@ -130,47 +157,40 @@ export default function Home() {
   const runAnalysis = async () => {
     setJob({ kind: "working" });
     try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider,
-          shots: analysable.map((s) => ({
-            id: s.id,
-            name: s.name,
-            text: s.text,
-            image: s.thumb,
-          })),
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setJob({ kind: "error", message: data.message ?? "Request failed." });
-        return;
-      }
-
-      const themes: Theme[] = data.themes.map(
-        (t: { label: string; shotIds: string[]; rationale?: string }, i: number) => ({
-          id: `theme-${i}`,
-          label: t.label,
-          weight: 1 - i / Math.max(data.themes.length, 1),
-          shotIds: t.shotIds.filter((id: string) => analysable.some((s) => s.id === id)),
-          color: PALETTE[i % PALETTE.length],
-          rationale: t.rationale,
-        }),
+      // Loaded on first use: the Anthropic SDK is most of its weight, and most
+      // visits never get this far.
+      const { analyse } = await import("@/lib/analyze");
+      const data = await analyse(
+        provider,
+        analysable.map((s) => ({
+          id: s.id,
+          name: s.name,
+          text: s.text,
+          image: s.thumb,
+        })),
+        apiKey,
       );
+
+      const themes: Theme[] = data.themes.map((t, i) => ({
+        id: `theme-${i}`,
+        label: t.label,
+        weight: 1 - i / Math.max(data.themes.length, 1),
+        shotIds: t.shotIds.filter((id) => analysable.some((s) => s.id === id)),
+        color: PALETTE[i % PALETTE.length],
+        rationale: t.rationale,
+      }));
 
       setAnalysis({
         themes,
         links: buildLinks(analysable, themes),
-        summary: stripEmphasis(String(data.summary ?? "")),
+        summary: stripEmphasis(data.summary),
         source: provider,
       });
       setJob({ kind: "idle" });
     } catch (error) {
       setJob({
         kind: "error",
-        message: error instanceof Error ? error.message : "Could not reach the analyser.",
+        message: error instanceof Error ? error.message : "The analysis failed.",
       });
     }
   };
@@ -332,6 +352,26 @@ export default function Home() {
                     <small>sharper · costs tokens</small>
                   </button>
                 </div>
+
+                {provider === "claude" && (
+                  <label className="key">
+                    <span>Anthropic API key</span>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="sk-ant-…"
+                      value={apiKey}
+                      onChange={(e) => {
+                        setApiKey(e.target.value);
+                        writeKey(e.target.value);
+                      }}
+                    />
+                    <small className="muted">
+                      Kept in this browser only and sent straight to Anthropic.
+                    </small>
+                  </label>
+                )}
 
                 <button
                   type="button"

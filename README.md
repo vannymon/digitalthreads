@@ -7,7 +7,37 @@ and export.
 Built for **saved inspiration** — the social posts, articles and product shots
 that pile up in a camera roll — in batches of roughly 10 to 50 at a time.
 
-## Running it
+## Using it on the web
+
+Every push to `main` publishes the app to GitHub Pages:
+**https://vannymon.github.io/digitalthreads/**
+
+It is a static site with no server of its own. Everything runs in your
+browser: OCR, the keyword pass, the graph, the export, and the calls to the
+model. The batch is kept in that browser's storage, so it doesn't follow you
+between devices.
+
+On the hosted site the analyser starts on **Claude**, since a phone or another
+computer has no local model. Paste an Anthropic API key into the field under
+the toggle; it is kept in that browser only and sent nowhere but Anthropic.
+Nobody visiting the site can spend your key, and you can't spend theirs.
+
+**On this machine** also works from the hosted site, on a computer running
+Ollama, once Ollama accepts the site's origin. Set this once and restart
+Ollama:
+
+```bash
+# Windows (PowerShell), then quit and reopen Ollama
+setx OLLAMA_ORIGINS "https://vannymon.github.io"
+```
+
+The browser may ask permission for the site to reach devices on your local
+network; allow it.
+
+The first deploy needs Pages switched on once: **Settings → Pages → Build and
+deployment → Source: GitHub Actions**.
+
+## Running it locally
 
 ```bash
 npm run dev
@@ -78,10 +108,10 @@ vision-capable model:
 ollama pull qwen3.6
 ```
 
-Override `OLLAMA_HOST` or `OLLAMA_MODEL` in `.env.local` if your setup differs.
-The Claude option needs `ANTHROPIC_API_KEY`. Neither is required — the keyword
-pass always works, and the app tells you plainly if the analyser you picked
-isn't reachable.
+Override `NEXT_PUBLIC_OLLAMA_HOST` or `NEXT_PUBLIC_OLLAMA_MODEL` in `.env.local`
+if your setup differs. The Claude option asks for an API key in the page.
+Neither is required — the keyword pass always works, and the app tells you
+plainly if the analyser you picked isn't reachable.
 
 ## The graph
 

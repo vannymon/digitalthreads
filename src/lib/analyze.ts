@@ -1,40 +1,30 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { Provider } from "./types";
 
 /**
- * The analysis pass, in two flavours.
+ * The analysis pass, in two flavours. Both run from the browser, so the app is
+ * a static site with no server of its own and can be hosted anywhere.
  *
- * - "ollama" (the default) runs a vision model on this machine. No API key, no
+ * - "ollama" calls a vision model on the visitor's own machine. No API key, no
  *   cost, nothing leaves the laptop. Slower, and less sharp on the subtle
  *   cross-domain connections.
- * - "claude" sends the batch to the Anthropic API for a sharper read.
+ * - "claude" sends the batch to the Anthropic API with the visitor's own key.
  *
  * Both return the same shape, so the rest of the app doesn't know which ran.
  */
 
-// Local inference on a 36B model is minutes, not seconds, for a big batch.
-export const maxDuration = 3600;
+const OLLAMA_HOST = process.env.NEXT_PUBLIC_OLLAMA_HOST ?? "http://localhost:11434";
+const OLLAMA_MODEL = process.env.NEXT_PUBLIC_OLLAMA_MODEL ?? "qwen3.6";
 
-const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "qwen3.6";
-
-const RequestSchema = z.object({
-  provider: z.enum(["ollama", "claude"]).default("ollama"),
-  shots: z
-    .array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        text: z.string(),
-        /** The downscaled screenshot as a data URL, so the model can see it. */
-        image: z.string().optional(),
-      }),
-    )
-    .min(2)
-    .max(50),
-});
+type Shot = {
+  id: string;
+  name: string;
+  text: string;
+  /** The downscaled screenshot as a data URL, so the model can see it. */
+  image?: string;
+};
 
 const DATA_URL = /^data:(image\/(?:jpeg|png|webp|gif));base64,(.+)$/;
 
@@ -68,7 +58,7 @@ const ResultSchema = z.object({
     ),
 });
 
-type Result = z.infer<typeof ResultSchema>;
+export type Result = z.infer<typeof ResultSchema>;
 
 const SYSTEM = `You are reading a batch of screenshots someone saved as inspiration.
 
@@ -104,25 +94,20 @@ The rationale is where the specifics go — name the actual details there. Then
 say what the collection is really about, including the throughline the person
 may not have noticed themselves.`;
 
-type Shot = z.infer<typeof RequestSchema>["shots"][number];
-
 function ocrLine(shot: Shot) {
   return shot.text.trim()
     ? `OCR text:\n${shot.text.slice(0, 4000)}`
     : "(no text found in this one — go by the image)";
 }
 
-export async function POST(request: Request) {
-  const body = await request.json().catch(() => null);
-  const parsed = RequestSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "bad_request", message: "Need between 2 and 50 screenshots." },
-      { status: 400 },
-    );
+export async function analyse(
+  provider: Provider,
+  shots: Shot[],
+  apiKey?: string,
+): Promise<Result> {
+  if (shots.length < 2 || shots.length > 50) {
+    throw new AnalysisError("Need between 2 and 50 screenshots.");
   }
-
-  const { provider, shots } = parsed.data;
 
   // Models cannot reliably echo 36-character UUIDs back, and a mangled id
   // silently empties a theme. They see "1", "2", "3" instead, and the real
@@ -131,15 +116,17 @@ export async function POST(request: Request) {
 
   try {
     const result =
-      provider === "claude" ? await runClaude(numbered) : await runOllama(numbered);
+      provider === "claude"
+        ? await runClaude(numbered, apiKey)
+        : await runOllama(numbered);
 
     const themes = result.themes
       .map((theme) => ({ ...theme, shotIds: resolveIds(theme.shotIds, shots) }))
       .filter((theme) => theme.shotIds.length > 0);
 
-    return NextResponse.json({ ...result, themes, provider });
+    return { ...result, themes };
   } catch (error) {
-    return toErrorResponse(error, provider);
+    throw toAnalysisError(error);
   }
 }
 
@@ -161,22 +148,12 @@ function resolveIds(ids: string[], shots: Shot[]): string[] {
 }
 
 /** Thrown for conditions we want to explain to the user in plain words. */
-class AnalysisError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-  }
-}
+export class AnalysisError extends Error {}
 
-async function runClaude(shots: Shot[]): Promise<Result> {
-  if (!process.env.ANTHROPIC_API_KEY) {
+async function runClaude(shots: Shot[], apiKey?: string): Promise<Result> {
+  if (!apiKey?.trim()) {
     throw new AnalysisError(
-      "no_key",
-      "Add ANTHROPIC_API_KEY to .env.local and restart, or switch to the local model.",
-      503,
+      "Paste an Anthropic API key above, or switch to the local model.",
     );
   }
 
@@ -201,7 +178,9 @@ async function runClaude(shots: Shot[]): Promise<Result> {
     content.push({ type: "text", text: `${ocrLine(shot)}\n</screenshot>` });
   }
 
-  const client = new Anthropic();
+  // The key is the visitor's own and only ever goes to Anthropic, which is
+  // what makes calling the API straight from the page acceptable here.
+  const client = new Anthropic({ apiKey: apiKey.trim(), dangerouslyAllowBrowser: true });
   const response = await client.messages.parse({
     model: "claude-opus-5-5",
     max_tokens: 16000,
@@ -211,14 +190,10 @@ async function runClaude(shots: Shot[]): Promise<Result> {
   });
 
   if (response.stop_reason === "refusal") {
-    throw new AnalysisError("refused", "Claude declined to analyse this batch.", 422);
+    throw new AnalysisError("Claude declined to analyse this batch.");
   }
   if (!response.parsed_output) {
-    throw new AnalysisError(
-      "unparsed",
-      "Claude's reply did not match the expected shape.",
-      502,
-    );
+    throw new AnalysisError("Claude's reply did not match the expected shape.");
   }
   return response.parsed_output;
 }
@@ -256,71 +231,57 @@ async function runOllama(shots: Shot[]): Promise<Result> {
       }),
     });
   } catch {
+    // From a hosted copy of the app the browser also needs Ollama to accept
+    // this site's origin, which it refuses by default.
+    const hosted = !/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
     throw new AnalysisError(
-      "ollama_unreachable",
-      `Could not reach Ollama at ${OLLAMA_HOST}. Start it with "ollama serve", or switch to Claude.`,
-      503,
+      hosted
+        ? `Could not reach Ollama at ${OLLAMA_HOST}. Make sure it is running, and that OLLAMA_ORIGINS includes ${window.location.origin} — or switch to Claude.`
+        : `Could not reach Ollama at ${OLLAMA_HOST}. Start it with "ollama serve", or switch to Claude.`,
     );
   }
 
   if (response.status === 404) {
     throw new AnalysisError(
-      "model_missing",
-      `Ollama has no model called "${OLLAMA_MODEL}". Pull it, or set OLLAMA_MODEL to one you have.`,
-      503,
+      `Ollama has no model called "${OLLAMA_MODEL}". Pull it, or set NEXT_PUBLIC_OLLAMA_MODEL to one you have.`,
     );
   }
   if (!response.ok) {
-    throw new AnalysisError("ollama_error", `Ollama returned ${response.status}.`, 502);
+    throw new AnalysisError(`Ollama returned ${response.status}.`);
   }
 
   const payload = (await response.json()) as { message?: { content?: string } };
   const raw = payload.message?.content?.trim();
   if (!raw) {
-    throw new AnalysisError("unparsed", "The local model returned nothing.", 502);
+    throw new AnalysisError("The local model returned nothing.");
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new AnalysisError(
-      "unparsed",
-      "The local model's reply was not valid JSON.",
-      502,
-    );
+    throw new AnalysisError("The local model's reply was not valid JSON.");
   }
 
   const checked = ResultSchema.safeParse(parsed);
   if (!checked.success) {
     throw new AnalysisError(
-      "unparsed",
       "The local model's reply did not match the expected shape.",
-      502,
     );
   }
   return checked.data;
 }
 
-function toErrorResponse(error: unknown, provider: string) {
-  if (error instanceof AnalysisError) {
-    return NextResponse.json(
-      { error: error.code, message: error.message, provider },
-      { status: error.status },
-    );
-  }
+function toAnalysisError(error: unknown): AnalysisError {
+  if (error instanceof AnalysisError) return error;
   if (error instanceof Anthropic.AuthenticationError) {
-    return NextResponse.json(
-      { error: "bad_key", message: "ANTHROPIC_API_KEY was rejected.", provider },
-      { status: 401 },
-    );
+    return new AnalysisError("Anthropic rejected that API key.");
   }
   if (error instanceof Anthropic.RateLimitError) {
-    return NextResponse.json(
-      { error: "rate_limited", message: "Rate limited — try again shortly.", provider },
-      { status: 429 },
-    );
+    return new AnalysisError("Rate limited — try again shortly.");
   }
-  const message = error instanceof Error ? error.message : "Unknown error";
-  return NextResponse.json({ error: "api_error", message, provider }, { status: 502 });
+  if (error instanceof Anthropic.APIConnectionError) {
+    return new AnalysisError("Could not reach the Anthropic API. Check your connection.");
+  }
+  return new AnalysisError(error instanceof Error ? error.message : "Unknown error");
 }
