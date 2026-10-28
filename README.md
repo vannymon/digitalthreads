@@ -1,4 +1,4 @@
-# Screenshot Threads
+# Digital Threads
 
 Drop in a batch of screenshots you saved and forgot about. It reads them, works
 out what keeps coming up, and draws the connections as a graph you can explore

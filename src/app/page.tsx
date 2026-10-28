@@ -253,7 +253,7 @@ export default function Home() {
     <main className="layout">
       <header className="masthead">
         <div>
-          <h1>Screenshot Threads</h1>
+          <h1>Digital Threads</h1>
           <p className="sub">
             Drop a batch of saved screenshots. It reads them, finds what keeps
             coming up, and draws the connections.

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Screenshot Threads",
+  title: "Digital Threads",
   description: "Find the common threads across a batch of saved screenshots.",
 };
 
