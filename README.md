@@ -17,10 +17,21 @@ browser: OCR, the keyword pass, the graph, the export, and the calls to the
 model. The batch is kept in that browser's storage, so it doesn't follow you
 between devices.
 
-On the hosted site the analyser starts on **Claude**, since a phone or another
-computer has no local model. Paste an Anthropic API key into the field under
-the toggle; it is kept in that browser only and sent nowhere but Anthropic.
-Nobody visiting the site can spend your key, and you can't spend theirs.
+On the hosted site the analyser starts on **Gemini**, since a phone or another
+computer has no local model and Gemini has a free tier. Get a key at
+[Google AI Studio](https://aistudio.google.com/apikey) (no card needed) and
+paste it into the field under the toggle. **Claude** works the same way with an
+Anthropic key. Keys are kept in that browser only and sent nowhere but the
+model's own API, so nobody visiting the site can spend yours.
+
+What the free Gemini tier costs you instead of money:
+
+- **Rate limits.** A handful of requests a minute and a daily cap; one batch is
+  one request, so normal use fits, but rapid re-analysing can hit the limit.
+  The app says so when it happens.
+- **Your screenshots may be used by Google** to improve its products — that is
+  the condition of the free tier. Don't send anything private through it; use
+  the local model for that.
 
 **On this machine** also works from the hosted site, on a computer running
 Ollama, once Ollama accepts the site's origin. Set this once and restart
@@ -75,7 +86,8 @@ a written summary. A toggle picks which model:
 
 | | Runs | Cost | Speed |
 |---|---|---|---|
-| **On this machine** (default) | `qwen3.6` via Ollama | free, fully offline | ~35s for 6 shots |
+| **On this machine** (default locally) | `qwen3.6` via Ollama | free, fully offline | ~35s for 6 shots |
+| **Gemini** (default hosted) | `gemini-flash-latest` | free tier, rate limited | — |
 | **Claude** | `claude-opus-5-5` | ~$0.18 per 50-shot batch | ~30s |
 
 Either way, screenshots with little or no text still carry their weight. On a

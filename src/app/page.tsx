@@ -22,25 +22,54 @@ function stripEmphasis(text: string) {
     .replace(/__(.+?)__/g, "$1");
 }
 
-const KEY_STORAGE = "digitalthreads.anthropicKey";
+type KeyedProvider = "gemini" | "claude";
+
+const KEY_STORAGE: Record<KeyedProvider, string> = {
+  gemini: "digitalthreads.geminiKey",
+  claude: "digitalthreads.anthropicKey",
+};
 
 /** Storage can throw in private windows; the key field just starts empty. */
-function readKey() {
+function readKey(provider: KeyedProvider) {
   try {
-    return localStorage.getItem(KEY_STORAGE) ?? "";
+    return localStorage.getItem(KEY_STORAGE[provider]) ?? "";
   } catch {
     return "";
   }
 }
 
-function writeKey(value: string) {
+function writeKey(provider: KeyedProvider, value: string) {
   try {
-    if (value) localStorage.setItem(KEY_STORAGE, value);
-    else localStorage.removeItem(KEY_STORAGE);
+    if (value) localStorage.setItem(KEY_STORAGE[provider], value);
+    else localStorage.removeItem(KEY_STORAGE[provider]);
   } catch {
     // Not remembered, but still used for this visit.
   }
 }
+
+const KEY_FIELD: Record<
+  KeyedProvider,
+  { label: string; placeholder: string; note: React.ReactNode }
+> = {
+  gemini: {
+    label: "Gemini API key",
+    placeholder: "AIza…",
+    note: (
+      <>
+        Free from{" "}
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+          Google AI Studio
+        </a>
+        . Kept in this browser only and sent straight to Google.
+      </>
+    ),
+  },
+  claude: {
+    label: "Anthropic API key",
+    placeholder: "sk-ant-…",
+    note: "Kept in this browser only and sent straight to Anthropic.",
+  },
+};
 
 type JobState =
   | { kind: "idle" }
@@ -59,7 +88,10 @@ export default function Home() {
   const [job, setJob] = useState<JobState>({ kind: "idle" });
   // Local model by default: free, offline, and already on this machine.
   const [provider, setProvider] = useState<Provider>("ollama");
-  const [apiKey, setApiKey] = useState("");
+  const [keys, setKeys] = useState<Record<KeyedProvider, string>>({
+    gemini: "",
+    claude: "",
+  });
   const [exporting, setExporting] = useState(false);
   const [restored, setRestored] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -70,11 +102,11 @@ export default function Home() {
       setRestored(true);
     });
     // Opened from anywhere but the laptop itself, the local model is almost
-    // certainly not reachable, so start on the option that can work.
+    // certainly not reachable, so start on the free option that can work.
     if (!/^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) {
-      setProvider("claude");
+      setProvider("gemini");
     }
-    setApiKey(readKey());
+    setKeys({ gemini: readKey("gemini"), claude: readKey("claude") });
     return () => void disposeOcr();
   }, []);
 
@@ -168,7 +200,7 @@ export default function Home() {
           text: s.text,
           image: s.thumb,
         })),
-        apiKey,
+        provider === "ollama" ? undefined : keys[provider],
       );
 
       const themes: Theme[] = data.themes.map((t, i) => ({
@@ -265,6 +297,7 @@ export default function Home() {
             : `${done} read · ${analysis.themes.length} themes · ${analysis.links.length} connections`}
           {!reading && failed > 0 && ` · ${failed} couldn't be read`}
           {analysis.source === "ollama" && " · analysed locally"}
+          {analysis.source === "gemini" && " · analysed by Gemini"}
           {analysis.source === "claude" && " · analysed by Claude"}
         </p>
       )}
@@ -344,6 +377,15 @@ export default function Home() {
                   </button>
                   <button
                     type="button"
+                    className={provider === "gemini" ? "seg on" : "seg"}
+                    aria-pressed={provider === "gemini"}
+                    onClick={() => setProvider("gemini")}
+                  >
+                    Gemini
+                    <small>free key · rate limited</small>
+                  </button>
+                  <button
+                    type="button"
                     className={provider === "claude" ? "seg on" : "seg"}
                     aria-pressed={provider === "claude"}
                     onClick={() => setProvider("claude")}
@@ -353,23 +395,22 @@ export default function Home() {
                   </button>
                 </div>
 
-                {provider === "claude" && (
+                {provider !== "ollama" && (
                   <label className="key">
-                    <span>Anthropic API key</span>
+                    <span>{KEY_FIELD[provider].label}</span>
                     <input
                       type="password"
                       autoComplete="off"
                       spellCheck={false}
-                      placeholder="sk-ant-…"
-                      value={apiKey}
+                      placeholder={KEY_FIELD[provider].placeholder}
+                      value={keys[provider]}
                       onChange={(e) => {
-                        setApiKey(e.target.value);
-                        writeKey(e.target.value);
+                        const value = e.target.value;
+                        setKeys((current) => ({ ...current, [provider]: value }));
+                        writeKey(provider, value);
                       }}
                     />
-                    <small className="muted">
-                      Kept in this browser only and sent straight to Anthropic.
-                    </small>
+                    <small className="muted">{KEY_FIELD[provider].note}</small>
                   </label>
                 )}
 

@@ -33,7 +33,7 @@ export type Link = {
 };
 
 /** Which pass produced an analysis: keyword matching, or a vision model. */
-export type Provider = "ollama" | "claude";
+export type Provider = "ollama" | "gemini" | "claude";
 
 export type Analysis = {
   themes: Theme[];

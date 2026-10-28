@@ -70,6 +70,7 @@ function truncate(text: string, max: number) {
 
 function sourceLabel(source: Analysis["source"]) {
   if (source === "claude") return "read by Claude";
+  if (source === "gemini") return "read by Gemini";
   if (source === "ollama") return "read on this machine";
   return "keyword pass";
 }
